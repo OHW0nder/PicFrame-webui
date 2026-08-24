@@ -1,0 +1,17 @@
+services:
+  picframe:
+    build:
+      context: .
+      network: host
+      args:
+        HTTP_PROXY: http://127.0.0.1:7890
+        HTTPS_PROXY: http://127.0.0.1:7890
+    image: picframe:local
+    container_name: picframe
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - .:/app
+      - /srv/downloads/picframe/input:/data/input
+      - /srv/downloads/picframe/output:/data/output

@@ -19,5 +19,6 @@ FONT_DIRS = [
     Path("/System/Library/Fonts"),
     Path("/System/Library/Fonts/Supplemental"),
     Path("/Library/Fonts"),
+    Path("/usr/share/fonts/truetype/dejavu"),
 ]
 SRGB_PROFILE = Path("/System/Library/ColorSync/Profiles/sRGB Profile.icc")

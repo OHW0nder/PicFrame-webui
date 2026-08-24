@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PicFrame</title>
+<style>
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin: 0 auto; max-width: 760px; padding: 24px; background: #f5f5f4; color: #1c1917; }
+.panel { background: #fff; border: 1px solid #d6d3d1; border-radius: 8px; padding: 20px; }
+h1 { font-size: 22px; line-height: 1.25; margin: 0 0 18px; }
+nav { display: flex; gap: 16px; align-items: center; margin-bottom: 18px; }
+a { color: inherit; }
+label { display: block; font-size: 13px; font-weight: 650; margin: 14px 0 6px; }
+select, button { box-sizing: border-box; width: 100%; height: 38px; border-radius: 6px; }
+select, button { border: 1px solid #a8a29e; font-size: 15px; padding: 0 10px; }
+button { background: #1c1917; color: #fff; cursor: pointer; margin-top: 20px; }
+.empty { color: #78716c; margin: 0; }
+</style>
+<h1>PicFrame</h1>
+<main class="panel">
+{% if photos %}
+<form method="post" action="/generate">
+  <label for="photo">照片</label>
+  <select id="photo" name="photo">
+  {% for photo in photos %}<option value="{{ photo.name }}">{{ photo.name }}</option>{% endfor %}
+  </select>
+  <label for="scheme">方案</label>
+  <select id="scheme" name="scheme">
+  {% for scheme_id, item in schemes.items() %}
+  <option value="{{ scheme_id }}" data-layouts='{{ item.layouts | list | tojson }}' {% if loop.first %}selected{% endif %}>{{ item.name }}</option>
+  {% endfor %}
+  </select>
+  <label for="layout">布局</label>
+  <select id="layout" name="layout"></select>
+  <label for="compression">输出</label>
+  <select id="compression" name="compression">
+    <option value="none">无损 PNG</option>
+    <option value="jpeg">社交 JPEG</option>
+  </select>
+  <button>生成</button>
+</form>
+{% else %}
+<p class="empty">请将照片放入 /srv/downloads/picframe/input。</p>
+{% endif %}
+</main>
+<nav>
+  <a href="/results">结果 JSON</a>
+</nav>
+<script>
+const scheme = document.getElementById("scheme");
+const layout = document.getElementById("layout");
+function sync() {
+  const layouts = JSON.parse(scheme.selectedOptions[0].dataset.layouts);
+  layout.replaceChildren(...layouts.map(value => new Option(value, value)));
+}
+scheme.addEventListener("change", sync);
+sync();
+</script>
