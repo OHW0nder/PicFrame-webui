@@ -158,6 +158,13 @@ def _public_job(job):
         if effect.get("status") == "ready" and effect.get("file"):
             effect["url"] = f"/api/jobs/{job['id']}/preview-effect/{index}"
         image["preview_effect"] = effect
+        effects = image.get("preview_effects") or {}
+        for template_id, template_effect in effects.items():
+            if template_effect.get("status") == "ready" and template_effect.get("file"):
+                template_effect["url"] = (
+                    f"/api/jobs/{job['id']}/preview-effect/{index}?template_id={template_id}"
+                )
+        image["preview_effects"] = effects
     return result
 
 
@@ -316,6 +323,7 @@ def _normalize_upload(job_id, raw_path, index, display_name):
             "error": None,
             "preview_key": None,
         },
+        "preview_effects": {},
     }
 
 
@@ -497,18 +505,23 @@ def generate_job_preview(job_id: str, payload: dict = Body(default=None)):
     job["custom"] = custom
     key = _preview_key(template_id, index, custom)
     image = job["images"][index]
-    effect = image.get("preview_effect") or {}
+    effects = dict(image.get("preview_effects") or {})
+    effect = effects.get(template_id) or {}
     if effect.get("status") == "ready" and effect.get("preview_key") == key:
+        image["preview_effects"] = effects
         _write_job(job)
         return _public_job(_load_job(job_id))
 
-    image["preview_effect"] = {
+    effect = {
         "template_id": template_id,
         "status": "generating",
         "file": None,
         "error": None,
         "preview_key": key,
     }
+    effects[template_id] = effect
+    image["preview_effects"] = effects
+    image["preview_effect"] = effect
     _write_job(job)
     future = _preview_executor.submit(_execute_preview, job_id, index, template_id, key)
     _preview_workers[(job_id, index, template_id)] = future
@@ -516,11 +529,15 @@ def generate_job_preview(job_id: str, payload: dict = Body(default=None)):
 
 
 @app.get("/api/jobs/{job_id}/preview-effect/{index}")
-def job_preview_effect(job_id: str, index: int):
+def job_preview_effect(job_id: str, index: int, template_id: str | None = None):
     job = _load_job(job_id)
     if index < 0 or index >= len(job.get("images", [])):
         raise HTTPException(status_code=404, detail="Image not found")
-    effect = job["images"][index].get("preview_effect") or {}
+    image = job["images"][index]
+    if template_id:
+        effect = (image.get("preview_effects") or {}).get(template_id) or {}
+    else:
+        effect = image.get("preview_effect") or {}
     if effect.get("status") != "ready" or not effect.get("file"):
         raise HTTPException(status_code=404, detail="Preview not found")
     return FileResponse(_safe_file_path(_job_id_path(job_id), effect["file"]))
@@ -779,13 +796,18 @@ def _execute_preview(job_id, index, template_id, preview_key):
 
         with _write_lock:
             job = _load_job(job_id)
-            job["images"][index]["preview_effect"] = {
+            image = job["images"][index]
+            effects = dict(image.get("preview_effects") or {})
+            effect = {
                 "template_id": template_id,
                 "status": "ready",
                 "file": f"preview/{target.name}",
                 "error": None,
                 "preview_key": preview_key,
             }
+            effects[template_id] = effect
+            image["preview_effects"] = effects
+            image["preview_effect"] = effect
             _write_job(job)
     except Exception as exc:
         with _write_lock:
@@ -793,7 +815,11 @@ def _execute_preview(job_id, index, template_id, preview_key):
                 job = _load_job(job_id)
                 effect = job["images"][index].get("preview_effect") or {}
                 effect.update({"status": "error", "error": str(exc)[-500:], "preview_key": preview_key})
-                job["images"][index]["preview_effect"] = effect
+                image = job["images"][index]
+                effects = dict(image.get("preview_effects") or {})
+                effects[template_id] = effect
+                image["preview_effects"] = effects
+                image["preview_effect"] = effect
                 _write_job(job)
             except Exception:
                 pass

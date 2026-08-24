@@ -70,6 +70,7 @@ const el = {
   progressMessage: document.getElementById("progressMessage"),
   progressBar: document.getElementById("progressBar"),
   originalView: document.getElementById("originalView"),
+  viewerNotice: document.getElementById("viewerNotice"),
   compareStage: document.getElementById("compareStage"),
   compareBefore: document.getElementById("compareBefore"),
   compareAfter: document.getElementById("compareAfter"),
@@ -229,7 +230,8 @@ function startPreviewPolling() {
       const job = await api(`/api/jobs/${state.jobId}`);
       state.job = job;
       renderJob();
-      const effect = job.images?.[state.selectedIndex]?.preview_effect;
+      const image = job.images?.[state.selectedIndex];
+      const effect = image?.preview_effects?.[state.selectedTemplateId] || image?.preview_effect;
       if (effect && effect.status === "generating") {
         state.previewPollTimer = setTimeout(poll, 800);
       }
@@ -268,7 +270,8 @@ async function requestPreview() {
     });
     state.job = job;
     renderJob();
-    const effect = job.images?.[state.selectedIndex]?.preview_effect;
+    const image = job.images?.[state.selectedIndex];
+    const effect = image?.preview_effects?.[state.selectedTemplateId] || image?.preview_effect;
     if (effect && effect.status === "generating") {
       startPreviewPolling();
     }
@@ -301,8 +304,11 @@ function renderTemplates() {
   el.templateList.innerHTML = state.templates.map((template) => {
     const active = template.id === activeId ? " active" : "";
     const keyNeeded = template.scheme === "scheme4" ? '<span class="template-key-needed">需要 Key</span>' : "";
+    const image = state.job?.images?.[state.selectedIndex];
+    const effect = image?.preview_effects?.[template.id];
+    const previewSrc = effect?.status === "ready" && effect.url ? effect.url : template.after;
     return `<button type="button" class="template-card${active}" data-template-id="${template.id}" aria-pressed="${template.id === activeId}">
-      <img src="${template.after}" alt="" loading="lazy">
+      <img src="${previewSrc}" alt="" loading="lazy">
       <span class="template-meta">
         <strong>${escapeHtml(template.name)}</strong>
         <span>${escapeHtml(template.category)}</span>
@@ -342,6 +348,8 @@ function renderThumbnails() {
 function renderOriginal() {
   if (!state.job || !state.job.images.length) return;
   const image = state.job.images[state.selectedIndex];
+  el.compareStage.hidden = true;
+  el.viewerNotice.hidden = true;
   el.originalView.innerHTML = `<img src="${image.preview_url}" alt="">`;
   const img = el.originalView.querySelector("img");
   bindViewerImageFit(img);
@@ -354,27 +362,25 @@ function renderTemplateCompare() {
   const template = selectedTemplate();
   if (!template) return;
   const image = state.job?.images?.[state.selectedIndex];
-  const effect = image?.preview_effect;
-  el.previewNotice.hidden = true;
+  const effect = image?.preview_effects?.[template.id] || image?.preview_effect;
+  el.compareStage.hidden = true;
+  el.viewerNotice.hidden = true;
   if (template.scheme === "scheme4") {
-    el.compareBefore.src = template.before;
-    el.compareAfter.src = template.after;
-    el.previewNotice.textContent = "Scheme4 需要配置 Key";
-    el.previewNotice.hidden = false;
+    el.originalView.innerHTML = `<img src="${template.after}" alt="">`;
+    bindViewerImageFit(el.originalView.querySelector("img"));
+    el.viewerNotice.textContent = "Scheme4 需要配置 Key";
+    el.viewerNotice.hidden = false;
   } else {
-    el.compareBefore.src = image?.preview_url || template.before;
     if (effect?.status === "ready" && effect.url) {
-      el.compareAfter.src = effect.url;
+      el.originalView.innerHTML = `<img src="${effect.url}" alt="">`;
+      el.viewerNotice.hidden = true;
     } else {
-      el.compareAfter.src = template.after;
-      el.previewNotice.textContent = effect?.status === "error" ? (effect.error || "预览生成失败") : "生成预览中";
-      el.previewNotice.hidden = false;
+      el.originalView.innerHTML = `<img src="${template.after}" alt="">`;
+      el.viewerNotice.textContent = effect?.status === "error" ? (effect.error || "预览生成失败") : "生成预览中";
+      el.viewerNotice.hidden = false;
     }
+    bindViewerImageFit(el.originalView.querySelector("img"));
   }
-  bindViewerImageFit(el.compareAfter);
-  el.compareStage.hidden = false;
-  el.originalView.innerHTML = "";
-  setReveal(state.reveal);
 }
 
 function renderResultCompare() {
@@ -383,13 +389,10 @@ function renderResultCompare() {
     showView("original");
     return;
   }
-  const image = state.job.images[state.selectedIndex] || state.job.images[0];
-  el.compareBefore.src = image.preview_url;
-  el.compareAfter.src = `/api/jobs/${state.job.id}/result/${result.index}`;
-  bindViewerImageFit(el.compareAfter);
-  el.compareStage.hidden = false;
-  el.originalView.innerHTML = "";
-  setReveal(state.reveal);
+  el.compareStage.hidden = true;
+  el.viewerNotice.hidden = true;
+  el.originalView.innerHTML = `<img src="/api/jobs/${state.job.id}/result/${result.index}" alt="">`;
+  bindViewerImageFit(el.originalView.querySelector("img"));
 }
 
 function renderViewer() {
@@ -439,6 +442,7 @@ function renderJob() {
   el.saveButton.innerHTML = `${icons.bookmark}${state.job.saved ? "已收藏" : "收藏"}`;
   el.resultViewButton.hidden = !hasResults();
 
+  renderTemplates();
   renderThumbnails();
   renderProgress();
   renderViewer();

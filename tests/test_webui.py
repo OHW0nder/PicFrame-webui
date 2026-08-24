@@ -207,6 +207,44 @@ class WebUITests(unittest.TestCase):
         self.assertEqual(gated.status_code, 400)
         self.assertIn("configured VLM key", gated.json()["detail"])
 
+    def test_multiple_template_previews_are_isolated(self):
+        job = self.client.post(
+            "/api/jobs",
+            files=[("files", ("preview.jpg", image_bytes(), "image/jpeg"))],
+        ).json()
+
+        def request_and_wait(template_id):
+            response = self.client.post(
+                f"/api/jobs/{job['id']}/preview",
+                json={"template_id": template_id, "index": 0, "custom": {}},
+            )
+            self.assertEqual(response.status_code, 200)
+            deadline = time.time() + 45
+            while time.time() < deadline:
+                current = self.client.get(f"/api/jobs/{job['id']}").json()
+                effect = current["images"][0]["preview_effects"][template_id]
+                if effect["status"] in {"ready", "error"}:
+                    return effect
+                time.sleep(0.25)
+            raise AssertionError(f"Preview for {template_id} did not finish")
+
+        portrait = request_and_wait("info-portrait")
+        terminal = request_and_wait("terminal")
+        self.assertEqual(portrait["status"], "ready", portrait.get("error"))
+        self.assertEqual(terminal["status"], "ready", terminal.get("error"))
+        self.assertNotEqual(portrait["file"], terminal["file"])
+
+        portrait_url = self.client.get(
+            f"/api/jobs/{job['id']}/preview-effect/0",
+            params={"template_id": "info-portrait"},
+        )
+        terminal_url = self.client.get(
+            f"/api/jobs/{job['id']}/preview-effect/0",
+            params={"template_id": "terminal"},
+        )
+        self.assertEqual(portrait_url.status_code, 200)
+        self.assertEqual(terminal_url.status_code, 200)
+
     def test_custom_overrides_flow_into_render_context(self):
         with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
             Image.new("RGB", (320, 240), (70, 120, 190)).save(tmp.name, format="JPEG")
@@ -253,6 +291,7 @@ class WebUITests(unittest.TestCase):
         self.assertEqual(started.status_code, 200)
         self.assertEqual(started.json()["custom"]["camera_model"], "CustomCamera")
         self.assertEqual(started.json()["custom"]["artist"], "Custom Artist")
+        self.wait_for_job(job["id"])
 
 
 if __name__ == "__main__":
