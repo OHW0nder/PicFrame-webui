@@ -20,7 +20,7 @@ class PresentationRenderer(ABC):
     renderer_id = ""
 
     @abstractmethod
-    def prepare_context(self, photo_path, source_dir, presentation, layout, compression="none"):
+    def prepare_context(self, photo_path, source_dir, presentation, layout, compression="none", exif=None, step_callback=None, custom=None):
         raise NotImplementedError
 
     @abstractmethod

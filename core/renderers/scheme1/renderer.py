@@ -8,7 +8,7 @@ from .cards import draw_copyright_overlay, draw_landscape_card, draw_portrait_ca
 class Scheme1Renderer(PresentationRenderer):
     renderer_id = "scheme1"
 
-    def prepare_context(self, photo_path, source_dir, presentation, layout, compression="none", exif=None, step_callback=None):
+    def prepare_context(self, photo_path, source_dir, presentation, layout, compression="none", exif=None, step_callback=None, custom=None):
         gear_config = presentation.resolve_path(presentation.resources.get("gear_config"))
         gear_asset_dir = presentation.resolve_path(presentation.resources.get("gear_assets"))
         context = build_context(
@@ -19,6 +19,7 @@ class Scheme1Renderer(PresentationRenderer):
             compression=compression,
             exif=exif,
             step_callback=step_callback,
+            custom=custom,
         )
         exp_text = " | ".join(context.line_items) if context.line_items else ""
         context.report_step(
@@ -51,7 +52,7 @@ class Scheme1Renderer(PresentationRenderer):
         draw_top_gps(canvas, fmt_gps(context.exif), context.bg, scale=scale)
         draw_copyright_overlay(
             canvas,
-            fmt_copyright(context.exif),
+            fmt_copyright(context.exif, artist=context.artist),
             context.bg,
             scale=scale,
         )

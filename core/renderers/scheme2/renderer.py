@@ -6,7 +6,7 @@ from .watermark import render_scheme2
 class Scheme2Renderer(PresentationRenderer):
     renderer_id = "scheme2"
 
-    def prepare_context(self, photo_path, source_dir, presentation, layout, compression="none", exif=None, step_callback=None):
+    def prepare_context(self, photo_path, source_dir, presentation, layout, compression="none", exif=None, step_callback=None, custom=None):
         ctx = build_context(
             photo_path,
             source_dir,
@@ -15,6 +15,7 @@ class Scheme2Renderer(PresentationRenderer):
             compression=compression,
             exif=exif,
             step_callback=step_callback,
+            custom=custom,
         )
         ctx.report_step(
             "[EXIF]",

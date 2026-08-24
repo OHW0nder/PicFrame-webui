@@ -285,6 +285,7 @@ def make_card(
     exif=None,
     debug=False,
     step_callback=None,
+    custom=None,
 ):
     from .output import OutputPolicy
 
@@ -312,6 +313,7 @@ def make_card(
         compression=output_policy.compression,
         exif=exif,
         step_callback=step_callback,
+        custom=custom,
     )
 
     context = RenderContext(

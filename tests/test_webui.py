@@ -8,12 +8,30 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from core.context import build_context
+from core.presentation import normalize_presentation
 import webui.app as webui
 
 
 def image_bytes(size=(360, 480), color=(70, 120, 190), image_format="JPEG"):
     buffer = io.BytesIO()
     Image.new("RGB", size, color).save(buffer, format=image_format)
+    return buffer.getvalue()
+
+
+def exif_image_bytes():
+    buffer = io.BytesIO()
+    image = Image.new("RGB", (640, 480), (80, 110, 140))
+    exif = Image.Exif()
+    exif[0x010F] = "TestMaker"
+    exif[0x0110] = "TestCamera"
+    exif[0xA434] = "TestLens 50mm"
+    exif[0x829A] = "1/125"
+    exif[0x829D] = "2.8"
+    exif[0x8827] = 200
+    exif[0x920A] = "50.0 mm"
+    exif[0x9003] = "2026:08:03 15:06:56"
+    image.save(buffer, format="JPEG", exif=exif)
     return buffer.getvalue()
 
 
@@ -145,6 +163,96 @@ class WebUITests(unittest.TestCase):
         self.assertEqual(finished["status"], "completed", finished.get("error"))
         self.assertEqual(len(finished["results"]), 1)
         self.assertEqual(finished["results"][0]["index"], 1)
+
+    def test_upload_preserves_exif_metadata(self):
+        created = self.client.post(
+            "/api/jobs",
+            files=[("files", ("P1006561.jpg", exif_image_bytes(), "image/jpeg"))],
+        )
+        self.assertEqual(created.status_code, 201)
+        metadata = created.json()["images"][0]["metadata"]
+        self.assertEqual(metadata["make"], "TestMaker")
+        self.assertEqual(metadata["camera_model"], "TestCamera")
+        self.assertEqual(metadata["lens_model"], "TestLens 50mm")
+        self.assertEqual(metadata["exposure_time"], "1/125")
+        self.assertEqual(str(metadata["f_number"]), "2.8")
+        self.assertEqual(metadata["iso"], 200)
+        self.assertEqual(metadata["focal_length"], "50.0 mm")
+
+    def test_real_preview_generation_and_scheme4_gate(self):
+        job = self.client.post(
+            "/api/jobs",
+            files=[("files", ("preview.jpg", image_bytes(), "image/jpeg"))],
+        ).json()
+        response = self.client.post(
+            f"/api/jobs/{job['id']}/preview",
+            json={"template_id": "info-portrait", "index": 0, "custom": {}},
+        )
+        self.assertEqual(response.status_code, 200)
+
+        deadline = time.time() + 45
+        while time.time() < deadline:
+            current = self.client.get(f"/api/jobs/{job['id']}").json()
+            effect = current["images"][0]["preview_effect"]
+            if effect["status"] in {"ready", "error"}:
+                break
+            time.sleep(0.25)
+        self.assertEqual(effect["status"], "ready", effect.get("error"))
+        self.assertEqual(self.client.get(f"/api/jobs/{job['id']}/preview-effect/0").status_code, 200)
+
+        gated = self.client.post(
+            f"/api/jobs/{job['id']}/preview",
+            json={"template_id": "editorial-guidance", "index": 0},
+        )
+        self.assertEqual(gated.status_code, 400)
+        self.assertIn("configured VLM key", gated.json()["detail"])
+
+    def test_custom_overrides_flow_into_render_context(self):
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
+            Image.new("RGB", (320, 240), (70, 120, 190)).save(tmp.name, format="JPEG")
+            presentation, layout = normalize_presentation("scheme1", "portrait")
+            context = build_context(
+                tmp.name,
+                Path(tmp.name).parent,
+                presentation,
+                layout,
+                exif={
+                    "Model": "OriginalCamera",
+                    "LensModel": "OriginalLens",
+                    "FNumber": "4.0",
+                    "Artist": "Original Artist",
+                },
+                custom={
+                    "camera_model": "CustomCamera",
+                    "lens_model": "CustomLens",
+                    "f_number": "1.8",
+                    "artist": "Custom Artist",
+                    "watermark_text": "Custom Watermark",
+                },
+            )
+        self.assertEqual(context.camera_model, "CustomCamera")
+        self.assertEqual(context.lens_model, "CustomLens")
+        self.assertEqual(context.line_items[0], "F1.8")
+        self.assertEqual(context.artist, "Custom Artist")
+        self.assertEqual(context.watermark_text, "Custom Watermark")
+
+    def test_start_stores_custom_values_on_job(self):
+        job = self.client.post(
+            "/api/jobs",
+            files=[("files", ("custom.jpg", image_bytes(), "image/jpeg"))],
+        ).json()
+        started = self.client.post(
+            f"/api/jobs/{job['id']}/start",
+            json={
+                "template_id": "info-portrait",
+                "compression": "jpeg",
+                "scope": "all",
+                "custom": {"camera_model": "CustomCamera", "artist": "Custom Artist"},
+            },
+        )
+        self.assertEqual(started.status_code, 200)
+        self.assertEqual(started.json()["custom"]["camera_model"], "CustomCamera")
+        self.assertEqual(started.json()["custom"]["artist"], "Custom Artist")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,10 @@
+import hashlib
 import io
 import json
 import os
 import re
 import shutil
+import subprocess
 import threading
 import uuid
 import zipfile
@@ -17,6 +19,7 @@ from PIL import Image, ImageOps
 
 from core.batch import generate_from_source
 from core.domain.events import EventLevel, PipelineStage
+from core.metadata import run_exif
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -38,6 +41,7 @@ MAX_FILE_SIZE = 512 * 1024 * 1024
 MAX_TOTAL_SIZE = 4 * 1024 * 1024 * 1024
 PREVIEW_MAX = 1600
 THUMB_MAX = 320
+PREVIEW_SOURCE_MAX = 720
 
 TEMPLATES = [
     {
@@ -103,6 +107,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="picframe-job")
 _workers = {}
+_preview_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="picframe-preview")
+_preview_workers = {}
 _write_lock = threading.RLock()
 
 
@@ -148,6 +154,10 @@ def _public_job(job):
         index = image.get("index")
         image["preview_url"] = f"/api/jobs/{job['id']}/preview/{index}"
         image["thumb_url"] = f"/api/jobs/{job['id']}/thumb/{index}"
+        effect = image.get("preview_effect") or {}
+        if effect.get("status") == "ready" and effect.get("file"):
+            effect["url"] = f"/api/jobs/{job['id']}/preview-effect/{index}"
+        image["preview_effect"] = effect
     return result
 
 
@@ -189,6 +199,68 @@ def _save_derivative(image, path, max_size, quality=86):
     return path
 
 
+def _copy_exif(source_path, target_path):
+    try:
+        subprocess.run(
+            [
+                "exiftool",
+                "-overwrite_original",
+                "-TagsFromFile",
+                str(source_path),
+                "-all:all",
+                "-Orientation#=1",
+                str(target_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return
+    except Exception:
+        pass
+    try:
+        with Image.open(source_path) as source:
+            exif = source.getexif()
+            if not exif:
+                return
+            exif[0x0112] = 1
+            with Image.open(target_path) as target:
+                target.save(target_path, exif=exif)
+    except Exception:
+        pass
+
+
+def _extract_metadata(path):
+    try:
+        data = run_exif(path)
+    except Exception:
+        return {}
+    return {
+        "make": data.get("Make"),
+        "camera_model": data.get("CameraModelName") or data.get("Model"),
+        "lens_model": data.get("LensModel") or data.get("LensID") or data.get("Lens"),
+        "exposure_time": data.get("ExposureTime") or data.get("ShutterSpeed"),
+        "f_number": data.get("FNumber") or data.get("Aperture"),
+        "iso": data.get("ISO"),
+        "focal_length": data.get("FocalLength"),
+        "exposure_compensation": data.get("ExposureCompensation"),
+        "white_balance": data.get("WhiteBalance"),
+        "date": data.get("DateTimeOriginal") or data.get("CreateDate"),
+        "gps_latitude": data.get("GPSLatitude"),
+        "gps_longitude": data.get("GPSLongitude"),
+        "gps_altitude": data.get("GPSAltitude") or data.get("Altitude"),
+        "artist": data.get("Artist") or data.get("By-line") or data.get("Creator") or data.get("Photographer"),
+    }
+
+
+def _preview_key(template_id, index, custom):
+    payload = {"template_id": template_id, "index": index, "custom": custom}
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:16]
+
+
 def _sanitize_display_name(filename):
     name = Path(filename or "image.jpg").name.strip()
     name = re.sub(r"[\x00-\x1f\x7f\\/:*?\"<>|]", "_", name)
@@ -221,6 +293,7 @@ def _normalize_upload(job_id, raw_path, index, display_name):
     preview_path = previews_dir / f"{stem}.jpg"
     thumb_path = thumbs_dir / f"{stem}.jpg"
     image.save(original_path, format="JPEG", quality=92, optimize=True)
+    _copy_exif(raw_path, original_path)
     _save_derivative(image, preview_path, PREVIEW_MAX)
     _save_derivative(image, thumb_path, THUMB_MAX, quality=78)
     return {
@@ -229,10 +302,20 @@ def _normalize_upload(job_id, raw_path, index, display_name):
         "file": f"originals/{original_path.name}",
         "preview": f"previews/{preview_path.name}",
         "thumb": f"thumbs/{thumb_path.name}",
+        "width": image.width,
+        "height": image.height,
+        "metadata": _extract_metadata(original_path),
         "status": "pending",
         "saved": False,
         "result": None,
         "error": None,
+        "preview_effect": {
+            "template_id": None,
+            "status": "idle",
+            "file": None,
+            "error": None,
+            "preview_key": None,
+        },
     }
 
 
@@ -297,6 +380,9 @@ async def create_job(files: list[UploadFile] = File(...)):
     (job_dir / "thumbs").mkdir()
     (job_dir / "working").mkdir()
     (job_dir / "result").mkdir()
+    (job_dir / "preview-src").mkdir()
+    (job_dir / "preview-work").mkdir()
+    (job_dir / "preview").mkdir()
 
     job = {
         "id": job_id,
@@ -309,6 +395,7 @@ async def create_job(files: list[UploadFile] = File(...)):
         "compression": "jpeg",
         "scope": "all",
         "scope_index": None,
+        "custom": {},
         "saved": False,
         "message": "Uploaded",
         "progress": {"current": 0, "total": len(files), "stage": "uploaded", "percent": 0, "message": "等待选择模板"},
@@ -325,7 +412,8 @@ async def create_job(files: list[UploadFile] = File(...)):
             ext = Path(display_name).suffix.lower()
             if ext not in ALLOWED_UPLOAD_EXTENSIONS:
                 raise HTTPException(status_code=400, detail=f"Unsupported file type: {display_name}")
-            raw_path = job_dir / "originals" / f"raw_{index:03d}_{Path(display_name).stem}.bin"
+            raw_suffix = ext or ".bin"
+            raw_path = job_dir / "originals" / f"raw_{index:03d}_{Path(display_name).stem}{raw_suffix}"
             try:
                 size = 0
                 with raw_path.open("wb") as raw_file:
@@ -390,6 +478,54 @@ def job_result(job_id: str, index: int):
     return FileResponse(_safe_file_path(_job_id_path(job_id), result["file"]))
 
 
+@app.post("/api/jobs/{job_id}/preview")
+def generate_job_preview(job_id: str, payload: dict = Body(default=None)):
+    job = _load_job(job_id)
+    payload = payload or {}
+    template_id = payload.get("template_id") or job.get("template_id") or "info-portrait"
+    template = TEMPLATE_BY_ID.get(template_id)
+    if not template:
+        raise HTTPException(status_code=400, detail="Unsupported template")
+    index = payload.get("index", 0)
+    if not isinstance(index, int) or not 0 <= index < len(job.get("images", [])):
+        raise HTTPException(status_code=400, detail="Invalid image index")
+    if template["scheme"] == "scheme4":
+        raise HTTPException(status_code=400, detail="Scheme4 preview requires a configured VLM key")
+
+    custom = dict(job.get("custom") or {})
+    custom.update(payload.get("custom") or {})
+    job["custom"] = custom
+    key = _preview_key(template_id, index, custom)
+    image = job["images"][index]
+    effect = image.get("preview_effect") or {}
+    if effect.get("status") == "ready" and effect.get("preview_key") == key:
+        _write_job(job)
+        return _public_job(_load_job(job_id))
+
+    image["preview_effect"] = {
+        "template_id": template_id,
+        "status": "generating",
+        "file": None,
+        "error": None,
+        "preview_key": key,
+    }
+    _write_job(job)
+    future = _preview_executor.submit(_execute_preview, job_id, index, template_id, key)
+    _preview_workers[(job_id, index, template_id)] = future
+    return _public_job(_load_job(job_id))
+
+
+@app.get("/api/jobs/{job_id}/preview-effect/{index}")
+def job_preview_effect(job_id: str, index: int):
+    job = _load_job(job_id)
+    if index < 0 or index >= len(job.get("images", [])):
+        raise HTTPException(status_code=404, detail="Image not found")
+    effect = job["images"][index].get("preview_effect") or {}
+    if effect.get("status") != "ready" or not effect.get("file"):
+        raise HTTPException(status_code=404, detail="Preview not found")
+    return FileResponse(_safe_file_path(_job_id_path(job_id), effect["file"]))
+
+
 @app.post("/api/jobs/{job_id}/save")
 def toggle_save(job_id: str):
     job = _load_job(job_id)
@@ -426,7 +562,11 @@ def start_job(job_id: str, payload: dict = Body(default=None)):
     else:
         scope_index = None
 
+    custom = dict(job.get("custom") or {})
+    if payload.get("custom"):
+        custom.update(payload["custom"])
     job["status"] = "queued"
+    job["custom"] = custom
     job["template_id"] = template["id"]
     job["scheme"] = template["scheme"]
     job["layout"] = template["layout"]
@@ -596,6 +736,71 @@ def _fail_job(job_id, exc):
     _write_job(job)
 
 
+def _make_preview_source(job_id, index, image_meta):
+    job_dir = _job_id_path(job_id)
+    source_dir = job_dir / "preview-src"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    source_path = source_dir / f"img_{index:03d}.jpg"
+    if source_path.exists():
+        return source_path
+    original_path = _safe_file_path(job_dir, image_meta["file"])
+    with Image.open(original_path) as source:
+        preview = source.convert("RGB")
+        preview.thumbnail((PREVIEW_SOURCE_MAX, PREVIEW_SOURCE_MAX), Image.Resampling.LANCZOS)
+        preview.save(source_path, format="JPEG", quality=88, optimize=True)
+    _copy_exif(original_path, source_path)
+    return source_path
+
+
+def _execute_preview(job_id, index, template_id, preview_key):
+    try:
+        job = _load_job(job_id)
+        job_dir = _job_id_path(job_id)
+        template = TEMPLATE_BY_ID[template_id]
+        image = job["images"][index]
+        source_path = _make_preview_source(job_id, index, image)
+        job = _load_job(job_id)
+        generation = generate_from_source(
+            source_path.parent,
+            output_dir=job_dir / "preview-work",
+            layout=template["layout"],
+            scheme=template["scheme"],
+            compression="jpeg",
+            photo=source_path.name,
+            custom=job.get("custom") or {},
+        )
+        if not generation["outputs"]:
+            raise ValueError("Preview generation produced no output")
+        output = Path(generation["outputs"][0])
+        preview_dir = job_dir / "preview"
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        target = preview_dir / f"{template_id}_{index}.jpg"
+        shutil.copy2(output, target)
+
+        with _write_lock:
+            job = _load_job(job_id)
+            job["images"][index]["preview_effect"] = {
+                "template_id": template_id,
+                "status": "ready",
+                "file": f"preview/{target.name}",
+                "error": None,
+                "preview_key": preview_key,
+            }
+            _write_job(job)
+    except Exception as exc:
+        with _write_lock:
+            try:
+                job = _load_job(job_id)
+                effect = job["images"][index].get("preview_effect") or {}
+                effect.update({"status": "error", "error": str(exc)[-500:], "preview_key": preview_key})
+                job["images"][index]["preview_effect"] = effect
+                _write_job(job)
+            except Exception:
+                pass
+    finally:
+        _preview_workers.pop((job_id, index, template_id), None)
+
+
 def _execute_job(job_id):
     try:
         job = _load_job(job_id)
@@ -613,6 +818,7 @@ def _execute_job(job_id):
             compression=job["compression"],
             photo=selected,
             event_callback=lambda event: _handle_progress(job_id, event),
+            custom=job.get("custom") or {},
         )
         _finalize_job(job_id, generation)
     except Exception as exc:

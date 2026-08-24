@@ -1238,7 +1238,7 @@ def render_scheme4_editorial(context):
         int(dark_c[2] * 0.8 + 110 * 0.2),
     )
 
-    meta_line = fmt_editorial_meta_line(getattr(context, "exif", {}))
+    meta_line = fmt_editorial_meta_line(getattr(context, "exif", {}), default_artist=getattr(context, "artist", "Vincent Chyu"))
 
     swatch_scale   = float(cfg.get("swatch_scale", 0.026))
     swatch_size    = max(14, int(panel_w * swatch_scale))
@@ -1302,5 +1302,4 @@ def render_scheme4_editorial(context):
         print("└" + "─" * 68)
 
     return canvas.convert("RGB")
-
 

@@ -6,7 +6,7 @@ from .gallery import render_scheme3_gallery
 class Scheme3Renderer(PresentationRenderer):
     renderer_id = "scheme3"
 
-    def prepare_context(self, photo_path, source_dir, presentation, layout, compression="none", exif=None, step_callback=None):
+    def prepare_context(self, photo_path, source_dir, presentation, layout, compression="none", exif=None, step_callback=None, custom=None):
         ctx = build_context(
             photo_path,
             source_dir,
@@ -15,6 +15,7 @@ class Scheme3Renderer(PresentationRenderer):
             compression=compression,
             exif=exif,
             step_callback=step_callback,
+            custom=custom,
         )
         ctx.report_step(
             "[EXIF]",

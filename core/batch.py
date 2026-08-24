@@ -103,6 +103,7 @@ def generate_batch(
     debug=False,
     photo=None,
     event_callback: Callable[[ProgressEvent], None] | None = None,
+    custom=None,
 ):
     start_time = time.time()
     presentation, layout = normalize_presentation(scheme, layout)
@@ -199,6 +200,7 @@ def generate_batch(
                     exif=exif_map.get(p.resolve()),
                     debug=debug,
                     step_callback=step_reporter,
+                    custom=custom,
                 ): (idx, p)
                 for idx, p in enumerate(photos, start=1)
             }
@@ -267,6 +269,7 @@ def generate_batch(
                     exif=exif_map.get(p.resolve()),
                     debug=debug,
                     step_callback=step_reporter,
+                    custom=custom,
                 )
                 outputs.append(out_path)
                 dispatch_event(
@@ -394,6 +397,7 @@ def generate_from_source(
     debug=False,
     photo=None,
     event_callback: Callable[[ProgressEvent], None] | None = None,
+    custom=None,
 ):
     source_dir = Path(source_dir).resolve()
     presentation, normalized_layout = normalize_presentation(scheme, layout)
@@ -410,10 +414,11 @@ def generate_from_source(
         debug=debug,
         photo=photo,
         event_callback=event_callback,
+        custom=custom,
     )
 
 
-def generate(task_dir, progress_callback=None, layout=None, scheme="scheme1", compression="none", debug=False, photo=None, event_callback=None):
+def generate(task_dir, progress_callback=None, layout=None, scheme="scheme1", compression="none", debug=False, photo=None, event_callback=None, custom=None):
     """Legacy src/result compatibility path; it intentionally skips new nesting."""
     task_dir = Path(task_dir).resolve()
     src_dir = task_dir / "src"
@@ -434,6 +439,7 @@ def generate(task_dir, progress_callback=None, layout=None, scheme="scheme1", co
             debug=debug,
             photo=photo,
             event_callback=event_callback,
+            custom=custom,
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc

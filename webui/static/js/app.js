@@ -6,12 +6,32 @@ const state = {
   selectedIndex: 0,
   view: "original",
   scope: "all",
+  custom: {},
   filter: "all",
   historyJobs: [],
   pollTimer: null,
+  previewPollTimer: null,
   reveal: 50,
   dragging: false,
+  naturalRatio: null,
 };
+
+const customFields = [
+  { key: "camera_model", label: "相机型号", full: false },
+  { key: "lens_model", label: "镜头型号", full: false },
+  { key: "exposure_time", label: "快门", full: false },
+  { key: "f_number", label: "光圈", full: false },
+  { key: "iso", label: "ISO", full: false },
+  { key: "focal_length", label: "焦距", full: false },
+  { key: "exposure_compensation", label: "曝光补偿", full: false },
+  { key: "white_balance", label: "白平衡", full: false },
+  { key: "date", label: "日期", full: false },
+  { key: "gps_latitude", label: "纬度", full: false },
+  { key: "gps_longitude", label: "经度", full: false },
+  { key: "gps_altitude", label: "海拔", full: false },
+  { key: "artist", label: "作者/版权名", full: false },
+  { key: "watermark_text", label: "水印文字", full: true },
+];
 
 const icons = {
   history: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>',
@@ -60,6 +80,8 @@ const el = {
   templateList: document.getElementById("templateList"),
   templateCount: document.getElementById("templateCount"),
   compression: document.getElementById("compression"),
+  customFields: document.getElementById("customFields"),
+  previewNotice: document.getElementById("previewNotice"),
   prevButton: document.getElementById("prevButton"),
   nextButton: document.getElementById("nextButton"),
   imageCounter: document.getElementById("imageCounter"),
@@ -132,6 +154,129 @@ function setReveal(value) {
   el.compareHandle.setAttribute("aria-valuenow", String(Math.round(state.reveal)));
 }
 
+function fitViewer(width, height) {
+  if (!width || !height) return;
+  state.naturalRatio = width / height;
+  const maxHeight = Math.min(window.innerHeight * 0.72, 760);
+  const maxWidth = Math.max(220, el.viewer.parentElement.clientWidth - 24);
+  let viewWidth = maxWidth;
+  let viewHeight = viewWidth / state.naturalRatio;
+  if (viewHeight > maxHeight) {
+    viewHeight = maxHeight;
+    viewWidth = viewHeight * state.naturalRatio;
+  }
+  el.viewer.style.width = `${Math.round(viewWidth)}px`;
+  el.viewer.style.height = `${Math.round(viewHeight)}px`;
+  el.viewer.classList.add("is-fitted");
+}
+
+function fitCurrentViewer() {
+  if (!state.naturalRatio) return;
+  const maxHeight = Math.min(window.innerHeight * 0.72, 760);
+  const maxWidth = Math.max(220, el.viewer.parentElement.clientWidth - 24);
+  let viewWidth = maxWidth;
+  let viewHeight = viewWidth / state.naturalRatio;
+  if (viewHeight > maxHeight) {
+    viewHeight = maxHeight;
+    viewWidth = viewHeight * state.naturalRatio;
+  }
+  el.viewer.style.width = `${Math.round(viewWidth)}px`;
+  el.viewer.style.height = `${Math.round(viewHeight)}px`;
+}
+
+function bindViewerImageFit(image) {
+  if (!image) return;
+  image.addEventListener("load", () => fitViewer(image.naturalWidth, image.naturalHeight));
+  if (image.complete && image.naturalWidth) {
+    fitViewer(image.naturalWidth, image.naturalHeight);
+  }
+}
+
+function renderCustomPanel() {
+  const template = selectedTemplate();
+  const image = state.job?.images?.[state.selectedIndex];
+  const metadata = image?.metadata || {};
+  el.customFields.innerHTML = customFields
+    .filter((field) => field.key !== "watermark_text" || template?.id === "brand-watermark")
+    .map((field) => {
+      const value = state.custom[field.key] ?? "";
+      const placeholder = metadata[field.key] ?? "";
+      return `<label class="custom-field${field.full ? " full" : ""}">
+        <span>${escapeHtml(field.label)}</span>
+        <input id="custom-${field.key}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off">
+      </label>`;
+    }).join("");
+  el.customFields.querySelectorAll("input").forEach((input) => {
+    input.addEventListener("input", () => {
+      state.custom[input.id.replace("custom-", "")] = input.value.trim();
+      schedulePreview();
+    });
+  });
+}
+
+function stopPreviewPolling() {
+  if (state.previewPollTimer) {
+    clearTimeout(state.previewPollTimer);
+    state.previewPollTimer = null;
+  }
+}
+
+function startPreviewPolling() {
+  stopPreviewPolling();
+  const poll = async () => {
+    if (!state.jobId) return;
+    try {
+      const job = await api(`/api/jobs/${state.jobId}`);
+      state.job = job;
+      renderJob();
+      const effect = job.images?.[state.selectedIndex]?.preview_effect;
+      if (effect && effect.status === "generating") {
+        state.previewPollTimer = setTimeout(poll, 800);
+      }
+    } catch (error) {
+      state.previewPollTimer = null;
+      toast(error.message);
+    }
+  };
+  state.previewPollTimer = setTimeout(poll, 500);
+}
+
+let previewTimer = null;
+
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  if (!state.jobId || !state.job) return;
+  const template = selectedTemplate();
+  if (!template || template.scheme === "scheme4") return;
+  if (["processing", "queued"].includes(state.job.status)) return;
+  previewTimer = setTimeout(requestPreview, 350);
+}
+
+async function requestPreview() {
+  if (!state.jobId || !state.job) return;
+  const template = selectedTemplate();
+  if (!template || template.scheme === "scheme4") return;
+  try {
+    const job = await api(`/api/jobs/${state.jobId}/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        template_id: template.id,
+        index: state.selectedIndex,
+        custom: state.custom,
+      }),
+    });
+    state.job = job;
+    renderJob();
+    const effect = job.images?.[state.selectedIndex]?.preview_effect;
+    if (effect && effect.status === "generating") {
+      startPreviewPolling();
+    }
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
 function statusBadge(status) {
   if (status === "completed") return "✓";
   if (status === "processing") return "…";
@@ -155,11 +300,13 @@ function renderTemplates() {
   const activeId = state.selectedTemplateId;
   el.templateList.innerHTML = state.templates.map((template) => {
     const active = template.id === activeId ? " active" : "";
+    const keyNeeded = template.scheme === "scheme4" ? '<span class="template-key-needed">需要 Key</span>' : "";
     return `<button type="button" class="template-card${active}" data-template-id="${template.id}" aria-pressed="${template.id === activeId}">
       <img src="${template.after}" alt="" loading="lazy">
       <span class="template-meta">
         <strong>${escapeHtml(template.name)}</strong>
         <span>${escapeHtml(template.category)}</span>
+        ${keyNeeded}
       </span>
     </button>`;
   }).join("");
@@ -169,12 +316,14 @@ function renderTemplates() {
 function selectTemplate(templateId) {
   state.selectedTemplateId = templateId;
   renderTemplates();
+  renderCustomPanel();
   if (state.job) {
     el.jobTemplateLabel.textContent = selectedTemplate()?.name || "未选择模板";
   }
   if (state.view === "template") {
     renderViewer();
   }
+  schedulePreview();
 }
 
 function renderThumbnails() {
@@ -194,13 +343,35 @@ function renderOriginal() {
   if (!state.job || !state.job.images.length) return;
   const image = state.job.images[state.selectedIndex];
   el.originalView.innerHTML = `<img src="${image.preview_url}" alt="">`;
+  const img = el.originalView.querySelector("img");
+  bindViewerImageFit(img);
+  if (image.width && image.height) {
+    fitViewer(image.width, image.height);
+  }
 }
 
 function renderTemplateCompare() {
   const template = selectedTemplate();
   if (!template) return;
-  el.compareBefore.src = template.before;
-  el.compareAfter.src = template.after;
+  const image = state.job?.images?.[state.selectedIndex];
+  const effect = image?.preview_effect;
+  el.previewNotice.hidden = true;
+  if (template.scheme === "scheme4") {
+    el.compareBefore.src = template.before;
+    el.compareAfter.src = template.after;
+    el.previewNotice.textContent = "Scheme4 需要配置 Key";
+    el.previewNotice.hidden = false;
+  } else {
+    el.compareBefore.src = image?.preview_url || template.before;
+    if (effect?.status === "ready" && effect.url) {
+      el.compareAfter.src = effect.url;
+    } else {
+      el.compareAfter.src = template.after;
+      el.previewNotice.textContent = effect?.status === "error" ? (effect.error || "预览生成失败") : "生成预览中";
+      el.previewNotice.hidden = false;
+    }
+  }
+  bindViewerImageFit(el.compareAfter);
   el.compareStage.hidden = false;
   el.originalView.innerHTML = "";
   setReveal(state.reveal);
@@ -215,6 +386,7 @@ function renderResultCompare() {
   const image = state.job.images[state.selectedIndex] || state.job.images[0];
   el.compareBefore.src = image.preview_url;
   el.compareAfter.src = `/api/jobs/${state.job.id}/result/${result.index}`;
+  bindViewerImageFit(el.compareAfter);
   el.compareStage.hidden = false;
   el.originalView.innerHTML = "";
   setReveal(state.reveal);
@@ -270,6 +442,7 @@ function renderJob() {
   renderThumbnails();
   renderProgress();
   renderViewer();
+  renderCustomPanel();
 }
 
 function selectImage(index) {
@@ -278,6 +451,8 @@ function selectImage(index) {
   el.imageCounter.textContent = `${state.selectedIndex + 1} / ${state.job.images.length}`;
   renderThumbnails();
   renderViewer();
+  renderCustomPanel();
+  schedulePreview();
 }
 
 function showView(view) {
@@ -290,9 +465,13 @@ function showView(view) {
     return;
   }
   renderViewer();
+  if (view === "template") {
+    schedulePreview();
+  }
 }
 
 function stopPolling() {
+  stopPreviewPolling();
   if (state.pollTimer) {
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
@@ -335,11 +514,13 @@ async function createJob(files) {
     const job = await api("/api/jobs", { method: "POST", body: formData });
     state.jobId = job.id;
     state.job = job;
+    state.custom = job.custom || {};
     state.selectedIndex = 0;
     state.view = "original";
     setState("workspace");
     renderJob();
     toast(`已上传 ${job.images.length} 张`);
+    schedulePreview();
   } catch (error) {
     toast(error.message);
   }
@@ -347,6 +528,7 @@ async function createJob(files) {
 
 async function startJob() {
   if (!state.jobId || !state.job) return;
+  stopPreviewPolling();
   const template = selectedTemplate();
   if (!template) {
     toast("请先选择模板");
@@ -361,6 +543,7 @@ async function startJob() {
         compression: el.compression.value,
         scope: state.scope,
         index: state.scope === "selected" ? state.selectedIndex : null,
+        custom: state.custom,
       }),
     });
     state.job = job;
@@ -426,11 +609,13 @@ function openJob(job) {
   stopPolling();
   state.jobId = job.id;
   state.job = job;
+  state.custom = job.custom || {};
   state.selectedIndex = 0;
   state.view = job.status === "completed" ? "result" : "original";
   closeHistory();
   setState("workspace");
   renderJob();
+  schedulePreview();
   if (["processing", "queued"].includes(job.status)) {
     startPolling();
   }
@@ -440,6 +625,7 @@ function resetWorkspace() {
   stopPolling();
   state.jobId = null;
   state.job = null;
+  state.custom = {};
   state.selectedIndex = 0;
   state.view = "original";
   setState("empty");
@@ -615,6 +801,7 @@ function bindEvents() {
       closeHistory();
     }
   });
+  window.addEventListener("resize", fitCurrentViewer);
 }
 
 function init() {

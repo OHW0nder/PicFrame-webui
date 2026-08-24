@@ -96,10 +96,11 @@
               <div id="compareClip" class="compare-clip">
                 <img id="compareAfter" alt="After">
               </div>
-              <div id="compareHandle" class="compare-handle" role="slider" tabindex="0" aria-label="对比滑块" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div>
-              <span class="compare-label before">Before</span>
-              <span class="compare-label after">After</span>
-            </div>
+            <div id="compareHandle" class="compare-handle" role="slider" tabindex="0" aria-label="对比滑块" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div>
+            <span class="compare-label before">Before</span>
+            <span class="compare-label after">After</span>
+            <div id="previewNotice" class="preview-notice" hidden></div>
+          </div>
           </div>
 
           <div id="thumbnailStrip" class="thumbnail-strip"></div>
@@ -129,6 +130,13 @@
                 <option value="none">PNG</option>
               </select>
             </div>
+          </section>
+
+          <section class="control-block custom-panel">
+            <details id="customDetails">
+              <summary>自定义参数</summary>
+              <div id="customFields" class="custom-grid"></div>
+            </details>
           </section>
         </aside>
       </div>

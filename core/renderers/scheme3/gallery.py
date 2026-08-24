@@ -185,7 +185,7 @@ def render_scheme3_gallery(context):
 
     gear_text = _format_gear_line(context, separator=separator)
     exposure_text = _format_exposure_line(context.exif, separator=separator)
-    artist_text = f"© {photo_year(context.exif)} {cfg_obj.artist()}"
+    artist_text = f"© {photo_year(context.exif)} {context.artist}"
 
     # 垂直排版基准位置
     text_baseline_y = margin_top + photo_h + int(margin_bottom * 0.35)
@@ -484,7 +484,7 @@ def _render_ascii_diptych(context, cfg_obj, cfg):
     focal_opt = " · ".join([t for t in [focal, fnum_str] if t])
     shutter_opt = " · ".join([t for t in [exp_time, iso_str, ev_val] if t])
     gps_val = fmt_gps(exif) or ""
-    artist_val = fmt_artist(exif, cfg_obj.artist())
+    artist_val = fmt_artist(exif, context.artist)
 
     right_items = []
     if cam_val:
@@ -673,7 +673,7 @@ def _render_ascii_diptych_portrait_square(
     focal_opt = " · ".join([t for t in [focal, fnum_str] if t])
     shutter_opt = " · ".join([t for t in [exp_time, iso_str, ev_val] if t])
     gps_val = fmt_gps(exif) or ""
-    artist_val = fmt_artist(exif, cfg_obj.artist())
+    artist_val = fmt_artist(exif, context.artist)
 
     pad_x = max(14, int(box_w * 0.045))
     pad_y = max(14, int(box_h * 0.025))
@@ -836,7 +836,6 @@ def _hex_to_rgb(hex_color: str) -> tuple:
     if len(hex_color) != 6:
         return (243, 240, 232)
     return (int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16))
-
 
 
 

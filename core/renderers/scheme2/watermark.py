@@ -101,7 +101,7 @@ def _scheme2_attribute(config, location, context):
         "Param": _scheme2_param(exif),
         "LensMake_LensModel": " ".join(value for value in (exif.get("LensMake", ""), context.lens_model) if value),
         "GeoInfo": fmt_gps(exif) or "/",
-        "Custom": config.element(location).get("value", ""),
+        "Custom": context.watermark_text or config.element(location).get("value", ""),
     }
     return values.get(name, "")
 
