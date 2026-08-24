@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PicFrame</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="PicFrame">
+      <span class="brand-mark">PF</span>
+      <span>PicFrame</span>
+    </a>
+    <div class="top-actions">
+      <button id="historyButton" class="ghost-btn" type="button">
+        <span id="historyIcon"></span>
+        图片历史
+      </button>
+      <button id="newJobButton" class="ghost-btn" type="button" hidden>
+        <span id="newJobIcon"></span>
+        新建任务
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section id="emptyState" class="state empty-state">
+      <div id="dropArea" class="drop-area" tabindex="0">
+        <div class="drop-icon" id="dropIcon"></div>
+        <h1>拖入照片</h1>
+        <p>JPG / PNG / WebP / HEIC / TIFF</p>
+        <button id="browseButton" class="primary-btn" type="button">
+          <span id="browseIcon"></span>
+          选择照片
+        </button>
+        <input id="fileInput" type="file" accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.tif,.tiff,image/jpeg,image/png,image/webp,image/heic,image/tiff" multiple hidden>
+      </div>
+    </section>
+
+    <section id="workspace" class="state workspace" hidden>
+      <div class="job-head">
+        <div>
+          <span id="jobTemplateLabel" class="eyebrow"></span>
+          <h1 id="jobTitle">PicFrame 工作台</h1>
+        </div>
+        <div class="job-actions">
+          <button id="saveButton" class="ghost-btn" type="button" hidden>
+            <span id="saveIcon"></span>
+            收藏
+          </button>
+          <button id="downloadSingleButton" class="ghost-btn" type="button" hidden>
+            <span id="downloadSingleIcon"></span>
+            下载单张
+          </button>
+          <button id="downloadAllButton" class="ghost-btn" type="button" hidden>
+            <span id="downloadAllIcon"></span>
+            下载 ZIP
+          </button>
+          <button id="startButton" class="primary-btn" type="button">
+            <span id="startIcon"></span>
+            开始处理
+          </button>
+        </div>
+      </div>
+
+      <div id="progressPanel" class="progress-panel" hidden>
+        <div class="progress-copy">
+          <strong id="progressTitle">准备中</strong>
+          <span id="progressMessage"></span>
+        </div>
+        <div class="progress-track">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+      </div>
+
+      <div class="workspace-grid">
+        <div class="viewer-panel">
+          <div class="viewer-toolbar">
+            <div class="segmented" role="group" aria-label="查看模式">
+              <button type="button" class="seg active" data-view="original">原图</button>
+              <button type="button" class="seg" data-view="template">模板</button>
+              <button id="resultViewButton" type="button" class="seg" data-view="result" hidden>结果</button>
+            </div>
+            <div class="viewer-nav">
+              <button id="prevButton" class="icon-btn" type="button" aria-label="上一张"></button>
+              <span id="imageCounter" class="image-counter"></span>
+              <button id="nextButton" class="icon-btn" type="button" aria-label="下一张"></button>
+            </div>
+          </div>
+
+          <div id="viewer" class="viewer" tabindex="0" aria-label="图片预览">
+            <div id="originalView" class="view-layer"></div>
+            <div id="compareStage" class="compare-stage" hidden>
+              <img id="compareBefore" alt="Before">
+              <div id="compareClip" class="compare-clip">
+                <img id="compareAfter" alt="After">
+              </div>
+              <div id="compareHandle" class="compare-handle" role="slider" tabindex="0" aria-label="对比滑块" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div>
+              <span class="compare-label before">Before</span>
+              <span class="compare-label after">After</span>
+            </div>
+          </div>
+
+          <div id="thumbnailStrip" class="thumbnail-strip"></div>
+        </div>
+
+        <aside class="control-panel">
+          <section class="control-block">
+            <div class="control-title">
+              <span>模板</span>
+              <span id="templateCount" class="count"></span>
+            </div>
+            <div id="templateList" class="template-list"></div>
+          </section>
+
+          <section class="control-block">
+            <div class="control-title">
+              <span>应用范围</span>
+            </div>
+            <div class="segmented full" role="group" aria-label="应用范围">
+              <button type="button" class="seg active" data-scope="all">全部</button>
+              <button type="button" class="seg" data-scope="selected">当前</button>
+            </div>
+            <div class="control-row">
+              <label for="compression">输出</label>
+              <select id="compression">
+                <option value="jpeg">JPEG</option>
+                <option value="none">PNG</option>
+              </select>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section id="historyOverlay" class="overlay" hidden>
+      <div class="history-dialog" role="dialog" aria-modal="true" aria-label="图片历史">
+        <header class="history-header">
+          <div>
+            <h2>图片历史</h2>
+            <p id="historyCount"></p>
+          </div>
+          <button id="closeHistoryButton" class="icon-btn" type="button" aria-label="关闭历史"></button>
+        </header>
+        <div class="filter-tabs" id="filterTabs">
+          <button type="button" class="seg active" data-filter="all">All</button>
+          <button type="button" class="seg" data-filter="Frames">Frames</button>
+          <button type="button" class="seg" data-filter="Watermarks">Watermarks</button>
+          <button type="button" class="seg" data-filter="Editorial">Editorial</button>
+          <button type="button" class="seg" data-filter="saved">Saved</button>
+        </div>
+        <div id="historyGrid" class="history-grid"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/static/js/app.js" defer></script>
+</body>
+</html>
